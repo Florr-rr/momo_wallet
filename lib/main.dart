@@ -1,9 +1,15 @@
+import 'package:cloud_firestore/cloud_firestore.dart' hide Transaction;
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
+import 'login_screen.dart';
 import 'wallet.dart';
 import 'weather.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
   runApp(const MomoApp());
 }
 
@@ -15,7 +21,29 @@ class MomoApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ThemeData(colorSchemeSeed: Colors.amber),
-      home: const WalletScreen(),
+      home: const AuthGate(),
+    );
+  }
+}
+
+class AuthGate extends StatelessWidget {
+  const AuthGate({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        if (snapshot.data == null) {
+          return const LoginScreen();
+        }
+        return const WalletScreen();
+      },
     );
   }
 }
@@ -28,131 +56,169 @@ class WalletScreen extends StatefulWidget {
 }
 
 class _WalletScreenState extends State<WalletScreen> {
-  List<Transaction> transactions = sampleTransactions();
-  bool loaded = false;
+  late final Stream<QuerySnapshot<Map<String, dynamic>>> stream;
+
+  // Ids swiped away: hidden at once, so the list updates immediately.
+  final Set<String> hidden = {};
 
   @override
   void initState() {
     super.initState();
-    init();
+    stream = myTransactions().orderBy('createdAt', descending: true).snapshots();
   }
 
-  Future<void> init() async {
-    final saved = await loadTransactions();
-    setState(() {
-      if (saved != null) transactions = saved;
-      loaded = true;
+  Future<void> add(Transaction t) async {
+    await myTransactions().add({
+      ...t.toMap(),
+      'createdAt': FieldValue.serverTimestamp(),
     });
   }
 
-  void add(Transaction t) {
+  void remove(Transaction t) {
     setState(() {
-      transactions.insert(0, t);
+      hidden.add(t.id);
     });
-    saveTransactions(transactions);
-  }
-
-  void remove(int index) {
-    final removed = transactions[index];
-    setState(() {
-      transactions.removeAt(index);
-    });
-    saveTransactions(transactions);
+    myTransactions().doc(t.id).delete();
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Deleted ${removed.description}'),
+        content: Text('Deleted ${t.description}'),
         action: SnackBarAction(
           label: 'Undo',
           onPressed: () {
-            setState(() {
-              transactions.insert(index, removed);
+            // Write the same data back, with its original time.
+            myTransactions().doc(t.id).set({
+              ...t.toMap(),
+              'createdAt': t.createdAt != null
+                  ? Timestamp.fromDate(t.createdAt!)
+                  : FieldValue.serverTimestamp(),
             });
-            saveTransactions(transactions);
+            setState(() {
+              hidden.remove(t.id);
+            });
           },
         ),
       ),
     );
   }
 
-  Future<void> open(bool receive) async {
+  Future<void> open(bool receive, int balance) async {
     final t = await showDialog<Transaction>(
       context: context,
-      builder: (_) =>
-          TransactionDialog(receive: receive, balance: balanceOf(transactions)),
+      builder: (_) => TransactionDialog(receive: receive, balance: balance),
     );
     if (t != null) add(t);
   }
 
   @override
   Widget build(BuildContext context) {
-    if (!loaded) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-    final balance = balanceOf(transactions);
     return Scaffold(
-      appBar: AppBar(title: const Text('MoMo Wallet')),
-      body: Column(
-        children: [
-          Card(
-            margin: const EdgeInsets.all(16),
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Center(
-                child: Column(
+      appBar: AppBar(
+        title: const Text('MoMo Wallet'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'Log out',
+            onPressed: () => FirebaseAuth.instance.signOut(),
+          ),
+        ],
+      ),
+      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: stream,
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  'Could not load your transactions.\n${snapshot.error}',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            );
+          }
+          if (!snapshot.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          final transactions = snapshot.data!.docs
+              .map(Transaction.fromDoc)
+              .where((t) => !hidden.contains(t.id))
+              .toList();
+          final balance = balanceOf(transactions);
+          return Column(
+            children: [
+              Card(
+                margin: const EdgeInsets.all(16),
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Center(
+                    child: Column(
+                      children: [
+                        const Text('Balance'),
+                        Text(
+                          '$balance RWF',
+                          style: const TextStyle(
+                            fontSize: 36,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const WeatherCard(),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
-                    const Text('Balance'),
-                    Text(
-                      '$balance RWF',
-                      style: const TextStyle(
-                        fontSize: 36,
-                        fontWeight: FontWeight.bold,
-                      ),
+                    FilledButton(
+                      onPressed: () => open(true, balance),
+                      child: const Text('Receive'),
+                    ),
+                    FilledButton(
+                      onPressed: () => open(false, balance),
+                      child: const Text('Send'),
                     ),
                   ],
                 ),
               ),
-            ),
-          ),
-          const WeatherCard(),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                FilledButton(
-                  onPressed: () => open(true),
-                  child: const Text('Receive'),
-                ),
-                FilledButton(
-                  onPressed: () => open(false),
-                  child: const Text('Send'),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: ListView.builder(
-              itemCount: transactions.length,
-              itemBuilder: (context, i) {
-                final t = transactions[i];
-                return Dismissible(
-                  key: ObjectKey(t),
-                  onDismissed: (_) => remove(i),
-                  background: Container(color: Colors.red),
-                  child: ListTile(
-                    leading: Icon(
-                      t.isIn ? Icons.arrow_downward : Icons.arrow_upward,
-                      color: t.isIn ? Colors.green : Colors.red,
-                    ),
-                    title: Text(t.description),
-                    trailing: Text('${t.isIn ? '+' : '-'}${t.amount} RWF'),
+              Expanded(
+                child: transactions.isEmpty
+                    ? const Center(
+                  child: Text(
+                    'No transactions yet.\nTap Receive to add one.',
+                    textAlign: TextAlign.center,
                   ),
-                );
-              },
-            ),
-          ),
-        ],
+                )
+                    : ListView.builder(
+                  itemCount: transactions.length,
+                  itemBuilder: (context, i) {
+                    final t = transactions[i];
+                    return Dismissible(
+                      key: ValueKey(t.id),
+                      onDismissed: (_) => remove(t),
+                      background: Container(color: Colors.red),
+                      child: ListTile(
+                        leading: Icon(
+                          t.isIn
+                              ? Icons.arrow_downward
+                              : Icons.arrow_upward,
+                          color: t.isIn ? Colors.green : Colors.red,
+                        ),
+                        title: Text(t.description),
+                        trailing: Text(
+                          '${t.isIn ? '+' : '-'}${t.amount} RWF',
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }

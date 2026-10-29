@@ -1,25 +1,44 @@
-import 'dart:convert';
-
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:cloud_firestore/cloud_firestore.dart' hide Transaction;
+import 'package:firebase_auth/firebase_auth.dart';
 
 class Transaction {
-  Transaction(this.description, this.amount, this.isIn);
+  Transaction(
+      this.description,
+      this.amount,
+      this.isIn, {
+        this.id = '',
+        this.createdAt,
+      });
 
   final String description;
   final int amount;
   final bool isIn;
+  final String id;
+  final DateTime? createdAt;
 
-  Map<String, dynamic> toJson() {
+  Map<String, dynamic> toMap() {
     return {'description': description, 'amount': amount, 'isIn': isIn};
   }
 
-  factory Transaction.fromJson(Map<String, dynamic> json) {
+  factory Transaction.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
+    final data = doc.data()!;
     return Transaction(
-      json['description'] as String,
-      json['amount'] as int,
-      json['isIn'] as bool,
+      data['description'] as String,
+      (data['amount'] as num).toInt(),
+      data['isIn'] as bool,
+      id: doc.id,
+      createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
     );
   }
+}
+
+// The signed-in user's transactions: users/{uid}/transactions
+CollectionReference<Map<String, dynamic>> myTransactions() {
+  final uid = FirebaseAuth.instance.currentUser!.uid;
+  return FirebaseFirestore.instance
+      .collection('users')
+      .doc(uid)
+      .collection('transactions');
 }
 
 List<Transaction> sampleTransactions() {
@@ -28,6 +47,21 @@ List<Transaction> sampleTransactions() {
     Transaction('Airtime', 3000, false),
     Transaction('Sent to Keza', 2000, false),
   ];
+}
+
+// Sample data, written once when a new account is created.
+Future<void> addSampleTransactions() async {
+  final now = DateTime.now();
+  final samples = sampleTransactions();
+  final batch = FirebaseFirestore.instance.batch();
+  for (var i = 0; i < samples.length; i++) {
+    // Salary gets the newest time, so it stays first in the list.
+    batch.set(myTransactions().doc(), {
+      ...samples[i].toMap(),
+      'createdAt': Timestamp.fromDate(now.subtract(Duration(seconds: i))),
+    });
+  }
+  await batch.commit();
 }
 
 int balanceOf(List<Transaction> list) {
@@ -76,21 +110,4 @@ String? checkSend(String phone, String amountText, int balance) {
     return 'The amount must not be more than your balance';
   }
   return null;
-}
-
-Future<void> saveTransactions(List<Transaction> list) async {
-  final prefs = await SharedPreferences.getInstance();
-  final json = list.map((t) => t.toJson()).toList();
-  await prefs.setString('transactions', jsonEncode(json));
-}
-
-// Returns null the very first time (nothing saved yet).
-Future<List<Transaction>?> loadTransactions() async {
-  final prefs = await SharedPreferences.getInstance();
-  final saved = prefs.getString('transactions');
-  if (saved == null) return null;
-  final list = jsonDecode(saved) as List;
-  return list
-      .map((x) => Transaction.fromJson(x as Map<String, dynamic>))
-      .toList();
 }
