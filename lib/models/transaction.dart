@@ -1,5 +1,4 @@
 import 'package:cloud_firestore/cloud_firestore.dart' hide Transaction;
-import 'package:firebase_auth/firebase_auth.dart';
 
 class Transaction {
   Transaction(
@@ -30,50 +29,6 @@ class Transaction {
       createdAt: (data['createdAt'] as Timestamp?)?.toDate(),
     );
   }
-}
-
-// The signed-in user's transactions: users/{uid}/transactions
-CollectionReference<Map<String, dynamic>> myTransactions() {
-  final uid = FirebaseAuth.instance.currentUser!.uid;
-  return FirebaseFirestore.instance
-      .collection('users')
-      .doc(uid)
-      .collection('transactions');
-}
-
-List<Transaction> sampleTransactions() {
-  return [
-    Transaction('Salary', 15000, true),
-    Transaction('Airtime', 3000, false),
-    Transaction('Sent to Keza', 2000, false),
-  ];
-}
-
-// Sample data, written once when a new account is created.
-Future<void> addSampleTransactions() async {
-  final now = DateTime.now();
-  final samples = sampleTransactions();
-  final batch = FirebaseFirestore.instance.batch();
-  for (var i = 0; i < samples.length; i++) {
-    // Salary gets the newest time, so it stays first in the list.
-    batch.set(myTransactions().doc(), {
-      ...samples[i].toMap(),
-      'createdAt': Timestamp.fromDate(now.subtract(Duration(seconds: i))),
-    });
-  }
-  await batch.commit();
-}
-
-int balanceOf(List<Transaction> list) {
-  var balance = 0;
-  for (final t in list) {
-    if (t.isIn) {
-      balance += t.amount;
-    } else {
-      balance -= t.amount;
-    }
-  }
-  return balance;
 }
 
 // Returns null if OK, or a message saying which rule failed.

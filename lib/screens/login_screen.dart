@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'wallet.dart';
+
+import '../repositories/transaction_repository.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -20,14 +21,14 @@ class _LoginScreenState extends State<LoginScreen> {
     if (!_formKey.currentState!.validate()) return;
     setState(() {
       _busy = true;
-      _error = null;
+      _error = null;`
     });
     try {
       final auth = FirebaseAuth.instance;
       if (newAccount) {
         await auth.createUserWithEmailAndPassword(
             email: _email.text.trim(), password: _password.text);
-        await addSampleTransactions();
+        await TransactionRepository(auth.currentUser!.uid).addSamples();
       } else {
         await auth.signInWithEmailAndPassword(
             email: _email.text.trim(), password: _password.text);
