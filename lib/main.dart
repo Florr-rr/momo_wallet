@@ -24,6 +24,7 @@ class MomoApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      title: 'MoMo Wallet',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(colorSchemeSeed: Colors.amber),
       home: const AuthGate(),

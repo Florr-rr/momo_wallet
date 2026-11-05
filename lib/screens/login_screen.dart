@@ -21,7 +21,7 @@ class _LoginScreenState extends State<LoginScreen> {
     if (!_formKey.currentState!.validate()) return;
     setState(() {
       _busy = true;
-      _error = null;`
+      _error = null;
     });
     try {
       final auth = FirebaseAuth.instance;
